@@ -415,7 +415,7 @@ func (d *Decoder) unmarshal(val reflect.Value, start *StartElement) error {
 		}
 
 		sv = v
-		tinfo, err = getTypeInfo(typ)
+		tinfo, err = getTypeInfo(typ, d.userNs)
 		if err != nil {
 			return err
 		}
@@ -505,97 +505,113 @@ func (d *Decoder) unmarshal(val reflect.Value, start *StartElement) error {
 		}
 	}
 
-	// Find end element.
-	// Process sub-elements along the way.
-Loop:
-	for {
-		var savedOffset int
-		if saveXML.IsValid() {
-			savedOffset = d.savedOffset()
+	// innerxml xml decoder
+	if saveXML.IsValid() {
+		if saveXML.CanInterface() && saveXML.Type().Implements(unmarshalerType) {
+			// This is an unmarshaler with a non-pointer receiver,
+			// so it's likely to be incorrect, but we do what we're told.
+			return d.unmarshalInterface(saveXML.Interface().(Unmarshaler), start)
 		}
-		tok, err := d.Token()
-		if err != nil {
-			return err
+
+		if saveXML.CanAddr() {
+			pv := saveXML.Addr()
+			if pv.CanInterface() && pv.Type().Implements(unmarshalerType) {
+				return d.unmarshalInterface(pv.Interface().(Unmarshaler), start)
+			}
 		}
-		switch t := tok.(type) {
-		case StartElement:
-			consumed := false
-			if sv.IsValid() {
-				consumed, err = d.unmarshalPath(tinfo, sv, nil, &t)
-				if err != nil {
-					return err
+	} else {
+
+		// Find end element.
+		// Process sub-elements along the way.
+	Loop:
+		for {
+			var savedOffset int
+			if saveXML.IsValid() {
+				savedOffset = d.savedOffset()
+			}
+			tok, err := d.Token()
+			if err != nil {
+				return err
+			}
+			switch t := tok.(type) {
+			case StartElement:
+				consumed := false
+				if sv.IsValid() {
+					consumed, err = d.unmarshalPath(tinfo, sv, nil, &t)
+					if err != nil {
+						return err
+					}
+					if !consumed && saveAny.IsValid() {
+						consumed = true
+						if err := d.unmarshal(saveAny, &t); err != nil {
+							return err
+						}
+					}
 				}
-				if !consumed && saveAny.IsValid() {
-					consumed = true
-					if err := d.unmarshal(saveAny, &t); err != nil {
+				if !consumed {
+					if err := d.Skip(); err != nil {
 						return err
 					}
 				}
-			}
-			if !consumed {
-				if err := d.Skip(); err != nil {
-					return err
+
+			case EndElement:
+				if saveXML.IsValid() {
+					saveXMLData = d.saved.Bytes()[saveXMLIndex:savedOffset]
+					if saveXMLIndex == 0 {
+						d.saved = nil
+					}
+				}
+				break Loop
+
+			case CharData:
+				if saveData.IsValid() {
+					data = append(data, t...)
+				}
+
+			case Comment:
+				if saveComment.IsValid() {
+					comment = append(comment, t...)
 				}
 			}
-
-		case EndElement:
-			if saveXML.IsValid() {
-				saveXMLData = d.saved.Bytes()[saveXMLIndex:savedOffset]
-				if saveXMLIndex == 0 {
-					d.saved = nil
-				}
-			}
-			break Loop
-
-		case CharData:
-			if saveData.IsValid() {
-				data = append(data, t...)
-			}
-
-		case Comment:
-			if saveComment.IsValid() {
-				comment = append(comment, t...)
-			}
 		}
-	}
 
-	if saveData.IsValid() && saveData.CanInterface() && saveData.Type().Implements(textUnmarshalerType) {
-		if err := saveData.Interface().(encoding.TextUnmarshaler).UnmarshalText(data); err != nil {
-			return err
-		}
-		saveData = reflect.Value{}
-	}
-
-	if saveData.IsValid() && saveData.CanAddr() {
-		pv := saveData.Addr()
-		if pv.CanInterface() && pv.Type().Implements(textUnmarshalerType) {
-			if err := pv.Interface().(encoding.TextUnmarshaler).UnmarshalText(data); err != nil {
+		if saveData.IsValid() && saveData.CanInterface() && saveData.Type().Implements(textUnmarshalerType) {
+			if err := saveData.Interface().(encoding.TextUnmarshaler).UnmarshalText(data); err != nil {
 				return err
 			}
 			saveData = reflect.Value{}
 		}
-	}
 
-	if err := copyValue(saveData, data); err != nil {
-		return err
-	}
+		if saveData.IsValid() && saveData.CanAddr() {
+			pv := saveData.Addr()
+			if pv.CanInterface() && pv.Type().Implements(textUnmarshalerType) {
+				if err := pv.Interface().(encoding.TextUnmarshaler).UnmarshalText(data); err != nil {
+					return err
+				}
+				saveData = reflect.Value{}
+			}
+		}
 
-	switch t := saveComment; t.Kind() {
-	case reflect.String:
-		t.SetString(string(comment))
-	case reflect.Slice:
-		t.Set(reflect.ValueOf(comment))
-	}
+		if err := copyValue(saveData, data); err != nil {
+			return err
+		}
 
-	switch t := saveXML; t.Kind() {
-	case reflect.String:
-		t.SetString(string(saveXMLData))
-	case reflect.Slice:
-		if t.Type().Elem().Kind() == reflect.Uint8 {
-			t.Set(reflect.ValueOf(saveXMLData))
+		switch t := saveComment; t.Kind() {
+		case reflect.String:
+			t.SetString(string(comment))
+		case reflect.Slice:
+			t.Set(reflect.ValueOf(comment))
+		}
+
+		switch t := saveXML; t.Kind() {
+		case reflect.String:
+			t.SetString(string(saveXMLData))
+		case reflect.Slice:
+			if t.Type().Elem().Kind() == reflect.Uint8 {
+				t.Set(reflect.ValueOf(saveXMLData))
+			}
 		}
 	}
-
 	return nil
 }
 

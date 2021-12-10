@@ -50,7 +50,7 @@ var nameType = reflect.TypeOf(Name{})
 
 // getTypeInfo returns the typeInfo structure with details necessary
 // for marshaling and unmarshaling typ.
-func getTypeInfo(typ reflect.Type) (*typeInfo, error) {
+func getTypeInfo(typ reflect.Type, usrNames map[string]string) (*typeInfo, error) {
 	if ti, ok := tinfoMap.Load(typ); ok {
 		return ti.(*typeInfo), nil
 	}
@@ -71,7 +71,7 @@ func getTypeInfo(typ reflect.Type) (*typeInfo, error) {
 					t = t.Elem()
 				}
 				if t.Kind() == reflect.Struct {
-					inner, err := getTypeInfo(t)
+					inner, err := getTypeInfo(t, usrNames)
 					if err != nil {
 						return nil, err
 					}
@@ -88,7 +88,7 @@ func getTypeInfo(typ reflect.Type) (*typeInfo, error) {
 				}
 			}
 
-			finfo, err := structFieldInfo(typ, &f)
+			finfo, err := structFieldInfo(typ, &f, usrNames)
 			if err != nil {
 				return nil, err
 			}
@@ -110,13 +110,19 @@ func getTypeInfo(typ reflect.Type) (*typeInfo, error) {
 }
 
 // structFieldInfo builds and returns a fieldInfo for f.
-func structFieldInfo(typ reflect.Type, f *reflect.StructField) (*fieldInfo, error) {
+func structFieldInfo(typ reflect.Type, f *reflect.StructField, userNs map[string]string) (*fieldInfo, error) {
 	finfo := &fieldInfo{idx: f.Index}
 
 	// Split the tag from the xml namespace if necessary.
 	tag := f.Tag.Get("xml")
 	if i := strings.Index(tag, " "); i >= 0 {
 		finfo.xmlns, tag = tag[:i], tag[i+1:]
+	}
+
+	if finfo.xmlns == "xml" {
+		finfo.xmlns = xmlURL
+	} else if ns, ok := userNs[finfo.xmlns]; ok {
+		finfo.xmlns = ns
 	}
 
 	// Parse flags.
@@ -187,7 +193,7 @@ func structFieldInfo(typ reflect.Type, f *reflect.StructField) (*fieldInfo, erro
 		// If the name part of the tag is completely empty, get
 		// default from XMLName of underlying struct if feasible,
 		// or field name otherwise.
-		if xmlname := lookupXMLName(f.Type); xmlname != nil {
+		if xmlname := lookupXMLName(f.Type, userNs); xmlname != nil {
 			finfo.xmlns, finfo.name = xmlname.xmlns, xmlname.name
 		} else {
 			finfo.name = f.Name
@@ -216,7 +222,7 @@ func structFieldInfo(typ reflect.Type, f *reflect.StructField) (*fieldInfo, erro
 	// is straightforward and unambiguous.
 	if finfo.flags&fElement != 0 {
 		ftyp := f.Type
-		xmlname := lookupXMLName(ftyp)
+		xmlname := lookupXMLName(ftyp, userNs)
 		if xmlname != nil && xmlname.name != finfo.name {
 			return nil, fmt.Errorf("xml: name %q in tag of %s.%s conflicts with name %q in %s.XMLName",
 				finfo.name, typ, f.Name, xmlname.name, ftyp)
@@ -228,7 +234,7 @@ func structFieldInfo(typ reflect.Type, f *reflect.StructField) (*fieldInfo, erro
 // lookupXMLName returns the fieldInfo for typ's XMLName field
 // in case it exists and has a valid xml field tag, otherwise
 // it returns nil.
-func lookupXMLName(typ reflect.Type) (xmlname *fieldInfo) {
+func lookupXMLName(typ reflect.Type, userNs map[string]string) (xmlname *fieldInfo) {
 	for typ.Kind() == reflect.Ptr {
 		typ = typ.Elem()
 	}
@@ -240,7 +246,7 @@ func lookupXMLName(typ reflect.Type) (xmlname *fieldInfo) {
 		if f.Name != xmlName {
 			continue
 		}
-		finfo, err := structFieldInfo(typ, &f)
+		finfo, err := structFieldInfo(typ, &f, userNs)
 		if err == nil && finfo.name != "" {
 			return finfo
 		}

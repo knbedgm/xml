@@ -173,8 +173,8 @@ func (enc *Encoder) Encode(v interface{}) error {
 // of Go values to XML.
 //
 // EncodeElement calls Flush before returning.
-func (enc *Encoder) EncodeElement(v interface{}, start StartElement) error {
-	err := enc.p.marshalValue(reflect.ValueOf(v), nil, &start)
+func (enc *Encoder) EncodeElement(v interface{}, start *StartElement) error {
+	err := enc.p.marshalValue(reflect.ValueOf(v), nil, start)
 	if err != nil {
 		return err
 	}
@@ -300,6 +300,19 @@ func (enc *Encoder) Flush() error {
 	return enc.p.Flush()
 }
 
+// Sets the namespace value for a prefix
+func (enc *Encoder) SetNamespace(ns Name) {
+	if enc.p.attrPrefix == nil {
+		enc.p.attrPrefix = make(map[string]string)
+		enc.p.attrNS = make(map[string]string)
+		enc.p.attrUser = make(map[string]string)
+	}
+
+	enc.p.attrNS[ns.Local] = ns.Space
+	enc.p.attrUser[ns.Local] = ns.Space
+	enc.p.attrPrefix[ns.Space] = ns.Local
+}
+
 type printer struct {
 	*bufio.Writer
 	encoder    *Encoder
@@ -311,6 +324,7 @@ type printer struct {
 	putNewline bool
 	attrNS     map[string]string // map prefix -> name space
 	attrPrefix map[string]string // map name space -> prefix
+	attrUser   map[string]string // user pre -> ns
 	prefixes   []string
 	tags       []Name
 }
@@ -320,6 +334,8 @@ type printer struct {
 func (p *printer) createAttrPrefix(url string) string {
 	if prefix := p.attrPrefix[url]; prefix != "" {
 		return prefix
+	} else if prefix := p.attrNS[url]; prefix != "" {
+		return url
 	}
 
 	// The "http://www.w3.org/XML/1998/namespace" name space is predefined as "xml"
@@ -462,7 +478,7 @@ func (p *printer) marshalValue(val reflect.Value, finfo *fieldInfo, startTemplat
 		return nil
 	}
 
-	tinfo, err := getTypeInfo(typ)
+	tinfo, err := getTypeInfo(typ, p.attrUser)
 	if err != nil {
 		return err
 	}
@@ -695,6 +711,12 @@ func (p *printer) writeStart(start *StartElement) error {
 	}
 
 	p.tags = append(p.tags, start.Name)
+
+	rootTag := false
+	if len(p.prefixes) == 0 {
+		rootTag = true
+	}
+
 	p.markPrefix()
 
 	p.writeIndent(1)
@@ -705,6 +727,16 @@ func (p *printer) writeStart(start *StartElement) error {
 		p.WriteString(` xmlns="`)
 		p.EscapeString(start.Name.Space)
 		p.WriteByte('"')
+	}
+
+	if rootTag {
+		for pf, ns := range p.attrNS {
+			p.WriteString(` xmlns:`)
+			p.EscapeString(pf)
+			p.WriteString(`="`)
+			p.EscapeString(ns)
+			p.WriteByte('"')
+		}
 	}
 
 	// Attributes

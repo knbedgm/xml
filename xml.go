@@ -217,6 +217,7 @@ type Decoder struct {
 	nextToken      Token
 	nextByte       int
 	ns             map[string]string
+	userNs         map[string]string
 	err            error
 	line           int
 	offset         int64
@@ -229,6 +230,7 @@ type Decoder struct {
 func NewDecoder(r io.Reader) *Decoder {
 	d := &Decoder{
 		ns:       make(map[string]string),
+		userNs:   make(map[string]string),
 		nextByte: -1,
 		line:     1,
 		Strict:   true,
@@ -245,12 +247,17 @@ func NewTokenDecoder(t TokenReader) *Decoder {
 	}
 	d := &Decoder{
 		ns:       make(map[string]string),
+		userNs:   make(map[string]string),
 		t:        t,
 		nextByte: -1,
 		line:     1,
 		Strict:   true,
 	}
 	return d
+}
+
+func (d *Decoder) SetNamespace(ns Name) {
+	d.userNs[ns.Local] = ns.Space
 }
 
 // Token returns the next XML token in the input stream.
