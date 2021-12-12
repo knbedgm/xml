@@ -54,6 +54,12 @@ type Attr struct {
 // StartElement, EndElement, CharData, Comment, ProcInst, or Directive.
 type Token interface{}
 
+// A Singleton XML Element e.g. <br/>
+type SingletonElement struct {
+	Name Name
+	Attr []Attr
+}
+
 // A StartElement represents an XML start element.
 type StartElement struct {
 	Name Name
@@ -71,6 +77,10 @@ func (e StartElement) Copy() StartElement {
 // End returns the corresponding XML end element.
 func (e StartElement) End() EndElement {
 	return EndElement{e.Name}
+}
+
+func (e StartElement) Singleton() SingletonElement {
+	return SingletonElement(e)
 }
 
 // An EndElement represents an XML end element.

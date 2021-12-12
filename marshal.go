@@ -207,6 +207,10 @@ func (enc *Encoder) EncodeToken(t Token) error {
 		if err := p.writeStart(&t); err != nil {
 			return err
 		}
+	case SingletonElement:
+		if err := p.writeSingleton(&t); err != nil {
+			return err
+		}
 	case EndElement:
 		if err := p.writeEnd(t.Name); err != nil {
 			return err
@@ -702,6 +706,41 @@ func (p *printer) marshalTextInterface(val encoding.TextMarshaler, start StartEl
 	}
 	EscapeText(p, text)
 	return p.writeEnd(start.Name)
+}
+
+// writeSingleton writes the given singleton element.
+func (p *printer) writeSingleton(start *SingletonElement) error {
+	if start.Name.Local == "" {
+		return fmt.Errorf("xml: singleton tag with no name")
+	}
+
+	p.WriteByte('<')
+	p.WriteString(start.Name.Local)
+
+	if start.Name.Space != "" {
+		p.WriteString(` xmlns="`)
+		p.EscapeString(start.Name.Space)
+		p.WriteByte('"')
+	}
+
+	// Attributes
+	for _, attr := range start.Attr {
+		name := attr.Name
+		if name.Local == "" {
+			continue
+		}
+		p.WriteByte(' ')
+		if name.Space != "" {
+			p.WriteString(p.createAttrPrefix(name.Space))
+			p.WriteByte(':')
+		}
+		p.WriteString(name.Local)
+		p.WriteString(`="`)
+		p.EscapeString(attr.Value)
+		p.WriteByte('"')
+	}
+	p.WriteString("/>")
+	return nil
 }
 
 // writeStart writes the given start element.
